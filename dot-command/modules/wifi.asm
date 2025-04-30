@@ -73,13 +73,84 @@ gotWait:
     call Uart.read : cp 'P' : jr nz, gotWait
     ret
 
+; BC - chunk size
+writeChunkOrStoreFN:
+    ld a, (filename_received)
+    or a
+    jr nz, .writeChunk
+    push bc ; chunk len
+    ld a, (fn_buffer_avail)
+    ld b, 0 : ld c, a
+    ld hl, filename
+    add hl, bc
+    ld de, hl
+    ld hl, buffer
+    ld b, a
+1:
+    ld a, (hl)
+    ld (de), a
+    inc hl
+    inc de
+    inc b
+    ld a, b
+    pop bc ; chunk len
+    dec bc
+    push bc ; chunk len
+    cp 32
+    jr z, .filenameComplete
+    push af ; filename bytes received
+    ld a, b
+    or c ; end of chuck. Don't forget to store a!
+    jr z, .endOfChunk
+    pop af
+    ld b, a
+    jr 1b
 
-recv:
+.filenameComplete
+    push hl ; buffer + bytes used for filename
+    ld a, 1
+    ld (filename_received), a
+    ld hl, filename
+    call EsxDOS.prepareFile
+    pop hl ; buffer + bytes used for filename
+    pop bc ; chunk len
+    ld a, b
+    or c
+    ret z ; end of chunk
+    push bc ; chunk len
+    ld de, buffer
+    ldir ; move non-consumed data to buffer start
+    pop bc
+
+.writeChunk:
+    call EsxDOS.writeChunk
+    ret
+
+.endOfChunk
+    pop af ; filename bytes received
+    pop bc
+    ld (fn_buffer_avail), a
+    ret
+
+recvWithFilename:
+    xor a
+    ld (filename_received), a
+    ld (fn_buffer_avail), a
+    ld hl, filename
+    ld bc, 32
+1:
+    ld (hl), 0
+    inc hl
+    dec bc
+    ld a, b
+    or c
+    jr nz, 1b
+.recv:
     call Uart.read
     cp 'L' : jp z, .closedBegins 
-    cp 'I' : jr nz, recv
-    call Uart.read : cp 'P' : jr nz, recv
-    call Uart.read : cp 'D' : jr nz, recv
+    cp 'I' : jr nz, .recv
+    call Uart.read : cp 'P' : jr nz, .recv
+    call Uart.read : cp 'D' : jr nz, .recv
     call Uart.read ; Comma :-) 
 .waitComma
     call Uart.read ; We don't care about socket number :-)
@@ -108,20 +179,20 @@ recv:
 
     ld hl, (data_avail)
     ld bc, hl
-    call EsxDOS.writeChunk
+    call writeChunkOrStoreFN
     ld a, '+' : rst #10
 
-    jp recv
+    jp .recv
     
 .closedBegins
-    call Uart.read : cp 'O' : jr nz, recv
-    call Uart.read : cp 'S' : jr nz, recv
-    call Uart.read : cp 'E' : jr nz, recv
-    call Uart.read : cp 'D' : jr nz, recv
+    call Uart.read : cp 'O' : jr nz, .recv
+    call Uart.read : cp 'S' : jr nz, .recv
+    call Uart.read : cp 'E' : jr nz, .recv
+    call Uart.read : cp 'D' : jr nz, .recv
 
     EspCmd "AT+RST"
 
-    jp EsxDOS.closeAndRun
+    jp EsxDOS.close
 
 getMyIp:
     EspCmd "AT+CIFSR"
@@ -214,5 +285,8 @@ checkOkErr:
     cp 10 : jr nz, .flushToLF
     ret
 
+filename_received db 0
+fn_buffer_avail db 32
+filename ds 32
 data_avail dw 0
     endmodule

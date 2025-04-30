@@ -1,5 +1,5 @@
 SOURCES=$(shell find . -type f -iname  "*.asm")
-BINARY=lain
+BINARY=zxmit
 VERSION=$(shell cat version.def)
 
 ay:

@@ -13,11 +13,12 @@ FMODE_CREATE = #0E
 CMD_BUFF = 23512
 
 prepareFile:
+    push hl
     xor a
     rst #8
     db ESX_GETSETDRV
 
-    ld hl, filename
+    pop hl
     ld b, FMODE_CREATE
     rst #8 
     db ESX_FOPEN
@@ -36,27 +37,15 @@ writeChunk:
     rst #8 : db ESX_FWRITE
     ret
 
-closeAndRun:
+close:
     ld a, (fhandle)
     rst #8 : db ESX_FSYNC
 
     ld a, (fhandle)
     rst #8 : db ESX_FCLOSE
-    
-    ld hl, command
-    ld de, CMD_BUFF
-    ld bc, size
-    ldir
 
-    ld hl, CMD_BUFF
     ei
-    rst #8
-    db ESX_EXEC
     ret
-    
 
 fhandle db 0
-command db "snapload "
-filename db "/tmp/lain.sna", 0
-size = $ - command
     endmodule

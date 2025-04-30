@@ -4,8 +4,9 @@
 text
     include "modules/version.asm"
     jp start
-ver db "Lain SNA v. ", VERSION_STRING, 13
-    db "(c) 2022 Alex Nihirash", 13, 13, 0
+ver db "zxmit v. ", VERSION_STRING, 13
+    db "(c) 2022 Alex Nihirash", 13
+    db "(c) 2025 Vasily Khoruzhick", 13, 13, 0
 
     include "modules/display.asm"
     include "modules/wifi.asm"
@@ -21,16 +22,15 @@ ver db "Lain SNA v. ", VERSION_STRING, 13
 
 start:
     printMsg ver
-    call EsxDOS.prepareFile
     call Uart.init
     call Wifi.init
     printMsg msg_my_ip
     printMsg Wifi.ipAddr
     printMsg new_line
     di
-    jp Wifi.recv
+    jp Wifi.recvWithFilename
 msg_my_ip db "Device IP: ", 0
 new_line db 13, "Listening port: 6144", 13, 0
 
 buffer = #8000
-    savebin "lain", text, $ - text
+    savebin "zxmit", text, $ - text
