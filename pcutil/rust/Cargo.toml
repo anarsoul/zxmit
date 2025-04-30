@@ -1,13 +1,14 @@
 [package]
-name = "sna-upload"
+name = "zxmit"
 version = "0.1.0"
 edition = "2021"
 authors = ["Alex Nihirash <anihirash@gmail.com>"]
 
 [dependencies]
 clap = { version = "4.0.23", features = ["derive"] }
-log = "0.4.8"
-simple_logger = "4.0.0" 
+log = "0.4"
+regex = "1.11.1"
+simple_logger = "5.0.0" 
 
 [profile.release]
 strip = true
