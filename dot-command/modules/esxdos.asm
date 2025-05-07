@@ -12,7 +12,7 @@ FMODE_CREATE = #0E
 
 CMD_BUFF = 23512
 
-prepareFile:
+open:
     push hl
     xor a
     rst #8
@@ -30,9 +30,9 @@ prepareFile:
     pop ix
     ret
 
+;; HL - buffer
 ;; BC - chunk size
-writeChunk:
-    ld hl, buffer
+write:
     ld a, (fhandle)
     rst #8 : db ESX_FWRITE
     ret

@@ -24,6 +24,11 @@
     call Wifi.checkOkErr
     ENDM
 
+    MACRO Border color
+    ld a, color
+    out (254), a
+    ENDM
+
     module Wifi
 init:
     EspSend "+++"
@@ -35,25 +40,28 @@ init:
     call reset
 
     EspCmdOkErr "ATE0"
-    jr c, .err
+    jp c, .err
 
     EspCmdOkErr "AT+CIPDINFO=0" ; Disable additional info
-    jr c, .err
+    jp c, .err
 
     EspCmdOkErr "AT+CIPMUX=1" ; Multiplexing required for listening
-    jr c, .err
+    jp c, .err
+
+    EspCmdOkErr "AT+CIPSERVERMAXCONN=1" ; Maximum 1 connection
+    jp c, .err
 
     EspCmdOkErr "AT+CIPSERVER=1,6144" ; Port number 
-    jr c, .err
+    jp c, .err
 
     call getMyIp
 
     ret
-.err
+.err:
     ld hl, .err_msg
     call Display.putStr
-    di : halt
-.err_msg db 13, "ESP error! Halted!", 0
+    ret
+.err_msg db 13, "ESP initialization error", 0
 
 reset:
     EspCmdOkErr "AT"
@@ -73,126 +81,153 @@ gotWait:
     call Uart.read : cp 'P' : jr nz, gotWait
     ret
 
-; BC - chunk size
-writeChunkOrStoreFN:
-    ld a, (filename_received)
-    or a
-    jr nz, .writeChunk
-    push bc ; chunk len
-    ld a, (fn_buffer_avail)
-    ld b, 0 : ld c, a
-    ld hl, filename
+HEADER_SIZE equ 17
+
+processPacket
+    ; does EsxDOS need it preserved?
+    push ix
+    ld ix, recv_buffer
+    ld a, (ix + 0) ; sequence
+    ld (seq), a
+    ld h, (ix + 1)
+    ld l, (ix + 2)
+    ; (ix + 3) is compression. Not supported for now.
+    pop ix
+    ld bc, HEADER_SIZE
     add hl, bc
-    ld de, hl
-    ld hl, buffer
-    ld b, a
-1:
-    ld a, (hl)
-    ld (de), a
-    inc hl
-    inc de
-    inc b
-    ld a, b
-    pop bc ; chunk len
-    dec bc
-    push bc ; chunk len
-    cp 32
-    jr z, .filenameComplete
-    push af ; filename bytes received
-    ld a, b
-    or c ; end of chuck. Don't forget to store a!
-    jr z, .endOfChunk
-    pop af
-    ld b, a
-    jr 1b
+    ld bc, (data_size)
+    sbc hl, bc
+    ld a, h
+    or l
+    jr nz, 1f
+    ld a, '!' : rst #10
 
-.filenameComplete
-    push hl ; buffer + bytes used for filename
+    ; error, packet size doesn't match the header
     ld a, 1
-    ld (filename_received), a
-    ld hl, filename
-    call EsxDOS.prepareFile
-    pop hl ; buffer + bytes used for filename
-    pop bc ; chunk len
-    ld a, b
-    or c
-    ret z ; end of chunk
-    push bc ; chunk len
-    ld de, buffer
-    ldir ; move non-consumed data to buffer start
-    pop bc
-
-.writeChunk:
-    call EsxDOS.writeChunk
     ret
 
-.endOfChunk
-    pop af ; filename bytes received
-    pop bc
-    ld (fn_buffer_avail), a
-    ret
-
-recvWithFilename:
-    xor a
-    ld (filename_received), a
-    ld (fn_buffer_avail), a
-    ld hl, filename
-    ld bc, 32
 1:
-    ld (hl), 0
-    inc hl
-    dec bc
-    ld a, b
-    or c
-    jr nz, 1b
-.recv:
+    ld a, (file_opened)
+    or a
+    jr nz, 1f
+    ld hl, recv_buffer + 4
+    call EsxDOS.open
+    ld a, 1
+    ld (file_opened), a
+
+1:
+    ld hl, (data_size)
+    ld bc, HEADER_SIZE
+    sbc hl, bc
+    ld bc, hl
+    ld hl, recv_buffer + HEADER_SIZE
+    call EsxDOS.write
+
+    ; OK
+    ld a, 0
+    ret
+
+recv:
     call Uart.read
     cp 'L' : jp z, .closedBegins 
-    cp 'I' : jr nz, .recv
-    call Uart.read : cp 'P' : jr nz, .recv
-    call Uart.read : cp 'D' : jr nz, .recv
-    call Uart.read ; Comma :-) 
+    cp 'I' : jr nz, recv
+
+    call Uart.read : cp 'P' : jr nz, recv
+    call Uart.read : cp 'D' : jr nz, recv
+    call Uart.read ; Comma
+    ld hl, socket_num
 .waitComma
-    call Uart.read ; We don't care about socket number :-)
-    cp ',' :  jr nz,.waitComma
-    ld hl,0			; count lenght
-.cil1	
+    ; Read and store socket number
+    push hl
+    call Uart.read
+    pop hl
+    cp ',' :  jr z,1f
+    ld (hl), a
+    inc hl
+    jr .waitComma
+1:
+    ld (hl), 0 ; Null-terminator
+
+    ; Read and store data size
+    ld hl, 0
+1:
     push  hl
     call Uart.read
     pop hl 
-    cp ':' : jr z, .storeAvail
+    cp ':' : jr z, .storeDataSize
     sub 0x30 : ld c,l : ld b,h : add hl,hl : add hl,hl : add hl,bc : add hl,hl : ld c,a : ld b,0 : add hl,bc
-    jr .cil1
-.storeAvail
-    ld (data_avail), hl
-    ld de, buffer
-.loadPacket
-    push hl
-    push de
-    call Uart.read 
-    pop de 
-    pop hl
-    ld (de), a
-    inc de
-    dec hl
-    ld a, h : or l : jr nz, .loadPacket
+    jr 1b
 
-    ld hl, (data_avail)
-    ld bc, hl
-    call writeChunkOrStoreFN
+.storeDataSize
+    ld (data_size), hl
+
+    ld hl, recv_buffer
+    ld bc, (data_size)
+.loadPacket
+    push bc
+    push hl
+    call Uart.read 
+    pop hl
+    pop bc
+    ld (hl), a
+    inc hl
+    dec bc
+    ld a, b : or c : jr nz, .loadPacket
+
+    ld bc, (data_size)
+    call processPacket
+    or a
+    jr nz, .packetErr
     ld a, '+' : rst #10
 
-    jp .recv
-    
+    EspSend "AT+CIPSEND="
+    ld hl, socket_num
+    call espSendZ
+    EspSend ",4"
+    ld a, 13: call Uart.write
+    ld a, 10: call Uart.write
+    call checkOkErr
+    jr c, .ipSendErr
+
+.wait
+    call Uart.read
+    cp '>'
+    jr nz, .wait
+    ld a, (seq)
+    call Uart.write
+    ld a, 0
+    call Uart.write
+    ld a, (data_size)
+    call Uart.write
+    ld a, (data_size + 1)
+    call Uart.write
+    ld a, 13: call Uart.write
+    ld a, 10: call Uart.write
+    jp recv
+.packetErr:
+    ld hl, .errPacket : call Display.putStr
+    jr .exit
+.ipSendErr:
+    ld hl, .errIpSendStr1 : call Display.putStr
+    jr .exit
+
 .closedBegins
-    call Uart.read : cp 'O' : jr nz, .recv
-    call Uart.read : cp 'S' : jr nz, .recv
-    call Uart.read : cp 'E' : jr nz, .recv
-    call Uart.read : cp 'D' : jr nz, .recv
+    call Uart.read : cp 'O' : jp nz, recv
+    call Uart.read : cp 'S' : jp nz, recv
+    call Uart.read : cp 'E' : jp nz, recv
+    call Uart.read : cp 'D' : jp nz, recv
 
-    EspCmd "AT+RST"
+.exit:
+    EspCmd "AT+CIPSERVER=0,1"
+    ld a, (file_opened)
+    or a
+    call nz, EsxDOS.close
+    ret
 
-    jp EsxDOS.close
+.errPacket:
+    db "Protocol error", 0
+.errIpSendStr1:
+    db "Error on AT+CIPSEND", 0
 
 getMyIp:
     EspCmd "AT+CIFSR"
@@ -226,7 +261,7 @@ getMyIp:
     jr .checkZero
 .err
     ld hl, .err_connect : call Display.putStr
-    jr $
+    ret
 .err_connect db "Use Network Manager and connect to Wifi", 13, "System halted", 0
 
 ipAddr db "000.000.000.000", 0
@@ -285,8 +320,8 @@ checkOkErr:
     cp 10 : jr nz, .flushToLF
     ret
 
-filename_received db 0
-fn_buffer_avail db 32
-filename ds 32
-data_avail dw 0
+seq db 0
+file_opened db 0
+data_size dw 0
+socket_num db "00000000", 0
     endmodule

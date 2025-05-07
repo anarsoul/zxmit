@@ -21,16 +21,21 @@ ver db "zxmit v. ", VERSION_STRING, 13
     ENDIF
 
 start:
+    call Display.cls
     printMsg ver
     call Uart.init
     call Wifi.init
     printMsg msg_my_ip
     printMsg Wifi.ipAddr
     printMsg new_line
-    di
-    jp Wifi.recvWithFilename
+    jp Wifi.recv
 msg_my_ip db "Device IP: ", 0
 new_line db 13, "Listening port: 6144", 13, 0
 
-buffer = #8000
     savebin "zxmit", text, $ - text
+
+recv_buffer = $
+data_buffer = ($ + 1024 + 32)
+data_end = data_buffer + 4096
+
+    assert data_end < 16384
