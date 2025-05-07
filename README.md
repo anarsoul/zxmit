@@ -2,7 +2,7 @@
 
 ## Description
 
-esxDOS dot command & PC utility to upload the files over the air from PC to a WiFi equipped ZX Spectrum (similar to [wload](https://github.com/mcleod-ideafix/wload) by mcleod_ideafix).
+esxDOS dot command & PC utility to upload arbitrary files over the air from PC to a WiFi equipped ZX Spectrum
 
 It contains two counterparts: Speccy part and PC part.
 
@@ -10,7 +10,7 @@ It contains two counterparts: Speccy part and PC part.
 
 ZX Spectrum dot-command starts a TCP server that listens on port 6144.
 
-It accepts connection, receives the data with 32-byte header containing the filename, and saves it in the current directory.
+It accepts connection, receives the data in 1k blocks with 17-byte header and saves it in the current directory.
 
 Once you run the command, it will show IP address of server and port. You will need the address to specify it in the PC utility.
 
@@ -21,6 +21,8 @@ Run `.zxmit` from BASIC to start the utility
 There are 2 flavors: CLI and GUI, both written in Rust. GUI is self-explanatory, CLI usage is:
 
 `zxmit <IP> filaname`
+
+Run `zxmit -h` for a full list of command line arguments
 
 ## Legal
 
