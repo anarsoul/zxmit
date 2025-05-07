@@ -5,6 +5,7 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, TcpStream};
 use std::path::Path;
+use zx0::Compressor;
 use regex::Regex;
 
 const CARGO_PKG_VERSION: Option<&'static str> = option_env!("CARGO_PKG_VERSION");
@@ -28,6 +29,7 @@ fn read_file(name: String) -> std::io::Result<Vec<u8>> {
 }
 
 const HEADER_LEN: usize = 17;
+const CHUNK_SIZE: usize = 1024;
 
 fn transmit(ip: Ipv4Addr, name: Vec<u8>, buffer: Vec<u8>) -> std::io::Result<()> {
     let addr = format!("{}:6144", ip);
@@ -37,26 +39,50 @@ fn transmit(ip: Ipv4Addr, name: Vec<u8>, buffer: Vec<u8>) -> std::io::Result<()>
     let mut seq: u8 = 0;
 
     let total = buffer.len();
+    let mut total_compressed = 0;
     let mut written = 0;
 
-    for chunk in buffer.chunks(1024) {
+    let mut blocks = Vec::new();
+
+    info!("Compressing...");
+
+    for chunk in buffer.chunks(CHUNK_SIZE) {
         let mut block: Vec<u8>;
+        let compressed = Compressor::new().quick_mode(true).compress(chunk);
+
+        let use_compressed : u8 = if chunk.len() == CHUNK_SIZE && compressed.output.len() < chunk.len() {
+            1
+        } else {
+            0
+        };
+
+        let mut to_send = if use_compressed == 0 { Vec::from(chunk) } else { compressed.output };
 
         block = vec![
                         seq,
-                        (chunk.len() % 256) as u8,
-                        (chunk.len() / 256) as u8,
-                        0 // no compression
+                        (to_send.len() % 256) as u8,
+                        (to_send.len() / 256) as u8,
+                        use_compressed,
         ];
+
+        seq = seq.wrapping_add(1);
 
         block.append(&mut name.clone());
         block.resize(HEADER_LEN, 0);
-        block.append(&mut Vec::from(chunk));
+        block.append(&mut to_send);
 
+        total_compressed += block.len();
+        blocks.push(block);
+    }
+
+    info!("Compressed {} bytes into {}", total, total_compressed);
+
+    for block in blocks {
+        seq = block[0];
+        written += block.len();
         stream.write_all(&block).unwrap();
-        written += chunk.len();
 
-        info!("Sent {} out of {}", written, total);
+        info!("Sent {} out of {}", written, total_compressed);
         let mut acked = 0;
         loop {
             // ACK is:
@@ -75,7 +101,6 @@ fn transmit(ip: Ipv4Addr, name: Vec<u8>, buffer: Vec<u8>) -> std::io::Result<()>
             }
         }
 
-        seq = seq.wrapping_add(1);
     }
 
     Ok(())
