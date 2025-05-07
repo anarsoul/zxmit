@@ -89,9 +89,8 @@ processPacket
     ld ix, recv_buffer
     ld a, (ix + 0) ; sequence
     ld (seq), a
-    ld h, (ix + 1)
-    ld l, (ix + 2)
-    ; (ix + 3) is compression. Not supported for now.
+    ld h, (ix + 2)
+    ld l, (ix + 1)
     pop ix
     ld bc, HEADER_SIZE
     add hl, bc
@@ -99,7 +98,7 @@ processPacket
     sbc hl, bc
     ld a, h
     or l
-    jr nz, 1f
+    jr z, 1f
     ld a, '!' : rst #10
 
     ; error, packet size doesn't match the header
@@ -116,13 +115,27 @@ processPacket
     ld (file_opened), a
 
 1:
+    ld a, (recv_buffer + 3)
+    or a
+    jr z, .notcompressed
+
+    ld hl, recv_buffer + HEADER_SIZE
+    ld de, data_buffer
+    call dzx0_standard
+
+    ld hl, data_buffer
+    ld bc, 1024
+    jr .write
+
+.notcompressed:
     ld hl, (data_size)
     ld bc, HEADER_SIZE
     sbc hl, bc
     ld bc, hl
     ld hl, recv_buffer + HEADER_SIZE
-    call EsxDOS.write
 
+.write
+    call EsxDOS.write
     ; OK
     ld a, 0
     ret
@@ -174,12 +187,20 @@ recv:
     dec bc
     ld a, b : or c : jr nz, .loadPacket
 
-    ld bc, (data_size)
     call processPacket
     or a
     jr nz, .packetErr
-    ld a, '+' : rst #10
+    ld a, (counter) : inc a : and a, 3 : ld (counter), a
+    jr nz, .skipProgress
+    ld a, (recv_buffer + 3)
+    or a
+    ld a, '+'
+    jr nz, 1f
+    ld a, '.'
+1:
+    rst #10
 
+.skipProgress:
     EspSend "AT+CIPSEND="
     ld hl, socket_num
     call espSendZ
@@ -225,9 +246,9 @@ recv:
     ret
 
 .errPacket:
-    db "Protocol error", 0
+    db 13, "Protocol error", 0
 .errIpSendStr1:
-    db "Error on AT+CIPSEND", 0
+    db 13, "Error on AT+CIPSEND", 0
 
 getMyIp:
     EspCmd "AT+CIFSR"
@@ -321,6 +342,7 @@ checkOkErr:
     ret
 
 seq db 0
+counter db 0
 file_opened db 0
 data_size dw 0
 socket_num db "00000000", 0

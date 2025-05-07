@@ -11,6 +11,7 @@ ver db "zxmit v. ", VERSION_STRING, 13
     include "modules/display.asm"
     include "modules/wifi.asm"
     include "modules/esxdos.asm"
+    include "modules/dzx0_standard.asm"
 
     IFDEF UNO
     include "drivers/zxuno.asm"
