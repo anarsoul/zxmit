@@ -1,16 +1,19 @@
 use clap::Parser;
 use log::{error, info};
+use regex::Regex;
 use simple_logger::SimpleLogger;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::net::{Ipv4Addr, TcpStream};
 use std::path::Path;
-use zx0::Compressor;
-use regex::Regex;
+use std::sync::mpsc;
+use std::time;
+use zx0::{CompressionResult, Compressor};
+use indicatif::ProgressBar;
 
 const CARGO_PKG_VERSION: Option<&'static str> = option_env!("CARGO_PKG_VERSION");
 
-/// This utility used for delivery filename to ZX Spectrum running zxmit
+/// Utility to send arbitrary files to a WiFi equipped ZX Spectrum
 #[derive(Debug, Parser)]
 #[command(about)]
 pub struct Arguments {
@@ -18,6 +21,12 @@ pub struct Arguments {
     pub ip: Ipv4Addr,
     /// File name of filename to deliver
     pub filename: String,
+    /// Dummy run without any networking communication
+    #[arg(short, long)]
+    pub dummy: bool,
+    /// Don't use compression
+    #[arg(short, long)]
+    pub no_compression: bool,
 }
 
 fn read_file(name: String) -> std::io::Result<Vec<u8>> {
@@ -31,58 +40,82 @@ fn read_file(name: String) -> std::io::Result<Vec<u8>> {
 const HEADER_LEN: usize = 17;
 const CHUNK_SIZE: usize = 1024;
 
-fn transmit(ip: Ipv4Addr, name: Vec<u8>, buffer: Vec<u8>) -> std::io::Result<()> {
+fn transmit(
+    ip: Ipv4Addr,
+    name: Vec<u8>,
+    buffer: Vec<u8>,
+    dummy: bool,
+    no_compression: bool,
+) -> std::io::Result<()> {
     let addr = format!("{}:6144", ip);
 
     info!("Establishing connection to {}", &addr);
-    let mut stream = TcpStream::connect(addr)?;
-    let mut seq: u8 = 0;
+    let mut stream = if dummy {
+        None
+    } else {
+        Some(TcpStream::connect(addr)?)
+    };
+    let mut compressed_bytes = 0;
+    let blocks_num = buffer.chunks(CHUNK_SIZE).len();
+    let total_bytes = buffer.len();
 
-    let total = buffer.len();
-    let mut total_compressed = 0;
-    let mut written = 0;
+    let now = time::Instant::now();
 
-    let mut blocks = Vec::new();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut seq: u8 = 0;
+        for chunk in buffer.chunks(CHUNK_SIZE) {
+            let mut block: Vec<u8>;
+            let compressed = if no_compression {
+                CompressionResult {
+                    output: Vec::new(),
+                    delta: 0,
+                }
+            } else {
+                Compressor::new().quick_mode(true).compress(chunk)
+            };
 
-    info!("Compressing...");
+            let use_compressed: u8 = if !no_compression
+                && chunk.len() == CHUNK_SIZE
+                && compressed.output.len() < chunk.len()
+            {
+                1
+            } else {
+                0
+            };
 
-    for chunk in buffer.chunks(CHUNK_SIZE) {
-        let mut block: Vec<u8>;
-        let compressed = Compressor::new().quick_mode(true).compress(chunk);
+            let mut to_send = if use_compressed == 0 {
+                Vec::from(chunk)
+            } else {
+                compressed.output
+            };
 
-        let use_compressed : u8 = if chunk.len() == CHUNK_SIZE && compressed.output.len() < chunk.len() {
-            1
-        } else {
-            0
+            block = vec![
+                seq,
+                (to_send.len() % 256) as u8,
+                (to_send.len() / 256) as u8,
+                use_compressed,
+            ];
+
+            seq = seq.wrapping_add(1);
+
+            block.append(&mut name.clone());
+            block.resize(HEADER_LEN, 0);
+            block.append(&mut to_send);
+            tx.send(Some(block)).unwrap();
+        }
+        tx.send(None).unwrap();
+    });
+
+    let bar = ProgressBar::new(blocks_num as u64);
+    while let Some(block) = rx.recv().unwrap() {
+        let seq = block[0];
+        if let Some(ref mut s) = stream {
+            s.write_all(&block).unwrap()
         };
 
-        let mut to_send = if use_compressed == 0 { Vec::from(chunk) } else { compressed.output };
-
-        block = vec![
-                        seq,
-                        (to_send.len() % 256) as u8,
-                        (to_send.len() / 256) as u8,
-                        use_compressed,
-        ];
-
-        seq = seq.wrapping_add(1);
-
-        block.append(&mut name.clone());
-        block.resize(HEADER_LEN, 0);
-        block.append(&mut to_send);
-
-        total_compressed += block.len();
-        blocks.push(block);
-    }
-
-    info!("Compressed {} bytes into {}", total, total_compressed);
-
-    for block in blocks {
-        seq = block[0];
-        written += block.len();
-        stream.write_all(&block).unwrap();
-
-        info!("Sent {} out of {}", written, total_compressed);
+        bar.inc(1);
+        compressed_bytes += block.len();
         let mut acked = 0;
         loop {
             // ACK is:
@@ -90,7 +123,11 @@ fn transmit(ip: Ipv4Addr, name: Vec<u8>, buffer: Vec<u8>) -> std::io::Result<()>
             // 1: error code, 0 if OK, 1 otherwise
             // 2, 3: acked size (includes header), LE
             let mut read_buf = [0u8; 4];
-            stream.read_exact(&mut read_buf).unwrap();
+            if let Some(ref mut stream) = stream {
+                stream.read_exact(&mut read_buf).unwrap()
+            } else {
+                break;
+            };
             if read_buf[0] != seq {
                 info!("Got out of order ACK: {} instead of {}", read_buf[0], seq);
                 continue;
@@ -100,9 +137,16 @@ fn transmit(ip: Ipv4Addr, name: Vec<u8>, buffer: Vec<u8>) -> std::io::Result<()>
                 break;
             }
         }
-
     }
+    bar.finish();
 
+    info!(
+        "Compressed {} bytes into {} bytes, ratio: {}, elapsed: {:.2?}",
+        total_bytes,
+        compressed_bytes,
+        compressed_bytes as f32 / total_bytes as f32,
+        now.elapsed()
+    );
     Ok(())
 }
 
@@ -144,10 +188,13 @@ fn process(args: Arguments) -> std::io::Result<()> {
     let basename = String::from(path.file_name().unwrap().to_str().unwrap());
     let namebuf: Vec<u8> = filename_to_short(&basename).into();
 
-    info!("Short filaname will be {}", String::from_utf8(namebuf.clone()).unwrap());
+    info!(
+        "Short filaname will be {}",
+        String::from_utf8(namebuf.clone()).unwrap()
+    );
     assert!(namebuf.len() <= 12);
 
-    transmit(args.ip, namebuf, file)?;
+    transmit(args.ip, namebuf, file, args.dummy, args.no_compression)?;
 
     Ok(())
 }

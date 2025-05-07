@@ -2,10 +2,11 @@
 name = "zxmit"
 version = "0.3.0"
 edition = "2024"
-authors = ["Alex Nihirash <anihirash@gmail.com>"]
+authors = ["Alex Nihirash <anihirash@gmail.com>", "Vasily Khoruzhick <anarsoul@gmail.com"]
 
 [dependencies]
 clap = { version = "4.0.23", features = ["derive"] }
+indicatif = "0.17.11"
 log = "0.4"
 regex = "1.11.1"
 simple_logger = "5.0.0" 
