@@ -2,14 +2,15 @@ use clap::Parser;
 use log::{error, info};
 use regex::Regex;
 use simple_logger::SimpleLogger;
-use std::fs::File;
-use std::io::{Read, Write};
-use std::net::{Ipv4Addr, TcpStream};
+use std::net::Ipv4Addr;
 use std::path::Path;
-use std::sync::mpsc;
 use std::time;
 use zx0::{CompressionResult, Compressor};
 use indicatif::ProgressBar;
+use tokio::io::AsyncWriteExt;
+use tokio::io::AsyncReadExt;
+use tokio::sync::mpsc;
+use tokio::net::TcpStream;
 
 const CARGO_PKG_VERSION: Option<&'static str> = option_env!("CARGO_PKG_VERSION");
 
@@ -29,20 +30,12 @@ pub struct Arguments {
     pub no_compression: bool,
 }
 
-fn read_file(name: String) -> std::io::Result<Vec<u8>> {
-    info!("Reading file '{}' ", name);
-    let mut file = File::open(name)?;
-    let mut buffer: Vec<u8> = Vec::new();
-    file.read_to_end(&mut buffer)?;
-    Ok(buffer)
-}
-
 const LONG_HEADER_LEN: usize = 17;
 const CHUNK_SIZE: usize = 1024;
 const FLAGS_COMPRESSED: u8 = 1;
 const FLAGS_LONG_HEADER: u8 = 2;
 
-fn transmit(
+async fn transmit(
     ip: Ipv4Addr,
     name: Vec<u8>,
     buffer: Vec<u8>,
@@ -55,7 +48,7 @@ fn transmit(
     let mut stream = if dummy {
         None
     } else {
-        Some(TcpStream::connect(addr)?)
+        Some(TcpStream::connect(addr).await?)
     };
     let mut compressed_bytes = 0;
     let blocks_num = buffer.chunks(CHUNK_SIZE).len();
@@ -63,8 +56,8 @@ fn transmit(
 
     let now = time::Instant::now();
 
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
+    let (tx, mut rx) = mpsc::channel(16);
+    tokio::spawn(async move {
         let mut seq: u8 = 0;
         let mut long_header = true;
         for chunk in buffer.chunks(CHUNK_SIZE) {
@@ -113,16 +106,15 @@ fn transmit(
                 long_header = false;
             }
             block.append(&mut to_send);
-            tx.send(Some(block)).unwrap();
+            tx.send(block).await.unwrap();
         }
-        tx.send(None).unwrap();
     });
 
     let bar = ProgressBar::new(blocks_num as u64);
-    while let Some(block) = rx.recv().unwrap() {
+    while let Some(block) = rx.recv().await {
         let seq = block[0];
         if let Some(ref mut s) = stream {
-            s.write_all(&block).unwrap()
+            s.write_all(&block).await?
         };
 
         bar.inc(1);
@@ -135,7 +127,7 @@ fn transmit(
             // 2, 3: acked size (includes header), LE
             let mut read_buf = [0u8; 4];
             if let Some(ref mut stream) = stream {
-                stream.read_exact(&mut read_buf).unwrap()
+                stream.read_exact(&mut read_buf).await?
             } else {
                 break;
             };
@@ -192,8 +184,8 @@ fn filename_to_short(filename: &str) -> String {
     std::format!("{}.{}", name, extension)
 }
 
-fn process(args: Arguments) -> std::io::Result<()> {
-    let file = read_file(args.filename.clone())?;
+async fn process(args: Arguments) -> std::io::Result<()> {
+    let file = tokio::fs::read(args.filename.clone()).await?;
     let filename = args.filename.clone();
     let path = Path::new(&filename);
     let basename = String::from(path.file_name().unwrap().to_str().unwrap());
@@ -205,12 +197,13 @@ fn process(args: Arguments) -> std::io::Result<()> {
     );
     assert!(namebuf.len() <= 12);
 
-    transmit(args.ip, namebuf, file, args.dummy, args.no_compression)?;
+    transmit(args.ip, namebuf, file, args.dummy, args.no_compression).await?;
 
     Ok(())
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     println!(
         "zxmit {} (c) Alex Nihirash & Vasily Khoruzhick",
         CARGO_PKG_VERSION.unwrap_or("dev")
@@ -219,7 +212,7 @@ fn main() {
 
     SimpleLogger::new().init().unwrap();
 
-    match process(args) {
+    match process(args).await {
         Err(e) => error!("{}", e.to_string()),
         _ => info!("Done!"),
     }

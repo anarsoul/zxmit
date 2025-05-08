@@ -10,6 +10,7 @@ indicatif = "0.17.11"
 log = "0.4"
 regex = "1.11.1"
 simple_logger = "5.0.0" 
+tokio = { version = "1.44", features = ["fs", "net", "io-util", "sync", "macros", "rt-multi-thread"] }
 zx0 = "1.0.0"
 
 [profile.release]
