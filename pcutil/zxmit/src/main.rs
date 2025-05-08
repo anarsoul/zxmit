@@ -1,12 +1,15 @@
 #![windows_subsystem = "windows"]
 
-use iced::widget::{button, center, column, text, text_input};
+mod upload;
+
+use upload::{UploadError, FileUploader, UploadProgress};
+use iced::widget::{button, center, checkbox, column, row, text, text_input, progress_bar};
 use iced::{Center, Element, Subscription, Event, Task, window::Event as WindowEvent, window};
 use std::path::PathBuf;
-use regex::Regex;
+use std::time;
 use serde::{Deserialize, Serialize};
-use tokio::net::TcpStream;
-use tokio::io::AsyncWriteExt;
+
+const CARGO_PKG_VERSION: Option<&'static str> = option_env!("CARGO_PKG_VERSION");
 
 #[cfg(target_os = "linux")]
 fn workarounds() {
@@ -21,20 +24,22 @@ fn workarounds() {
 pub fn main() -> iced::Result {
     workarounds();
     let settings: window::settings::Settings = iced::window::settings::Settings {
-        size: iced::Size::new(450.0, 350.0),
+        size: iced::Size::new(450.0, 400.0),
         resizable: (false),
         ..Default::default()
     };
     iced::application(App::new, App::update, App::view)
         .subscription(App::subscription)
         .window(settings)
-        .title("ZXmit")
+        .title(App::title)
         .run()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct Config {
     address: String,
+    use_compression: bool,
+    dummy: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -84,98 +89,55 @@ impl Config {
 
 }
 
-#[derive(Debug, Clone)]
-enum UploadError {
-    File,
-    Connection,
-}
-
 #[derive(Debug)]
-struct FileUploader {
-    address: String,
-    filepath: PathBuf,
-}
-
-impl FileUploader {
-    fn split_at_last_dot(filename: &str) -> (String, String) {
-        let parts: Vec<&str> = filename.split('.').collect();
-
-        if parts.len() <= 1 {
-            return (filename.to_string(), "".to_string());
-        }
-
-        let last = parts.last().unwrap().to_string();
-        let first = parts[..parts.len() - 1].join(" ");
-
-        (first, last)
-    }
-
-    fn filename_to_short(filename: &str) -> String {
-        let (mut name, mut extension) = Self::split_at_last_dot(filename);
-
-        if name.len() > 8 {
-            name = name.chars().take(8).collect();
-        }
-        if extension.len() > 3 {
-            extension = extension.chars().take(3).collect();
-        }
-
-        let re = Regex::new(r"[ \t\.\\/]").unwrap();
-
-        name = re.replace_all(&name, "_").to_string();
-        extension = re.replace_all(&extension, "_").to_string();
-
-        let res = std::format!("{}.{}", name, extension);
-        println!("Short filename is {}", &res);
-
-        res
-    }
-
-    async fn upload(self) -> Result<(), UploadError> {
-        let mut file = tokio::fs::read(self.filepath.clone())
-            .await
-            .map_err(|_| UploadError::File)?;
-        let basename = self.filepath.as_path().file_name().unwrap().to_str().unwrap();
-        let mut namebuf: Vec<u8> = Self::filename_to_short(basename).into();
-        assert!(namebuf.len() <= 32);
-        namebuf.resize(32, 0);
-        namebuf.append(&mut file);
-
-        let addr = format!("{}:6144", self.address);
-
-        let mut stream = TcpStream::connect(addr)
-            .await
-            .map_err(|_| UploadError::Connection)?;
-
-        {
-            stream.write_all(&namebuf)
-                .await
-                .map_err(|_| UploadError::Connection)?;
-        }
-
-        Ok(())
-    }
-}
-
-#[derive(Debug, Default)]
 struct App {
     filepath: Option<PathBuf>,
     address: Option<String>,
     status: String,
     sending: bool,
+    dummy: bool,
+    use_compression: bool,
+    progress: f32,
+    total_bytes: usize,
+    compressed_bytes: usize,
+    now: Option<time::Instant>,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        Self {
+            filepath: None,
+            address: None,
+            status: String::new(),
+            sending: false,
+            dummy: false,
+            use_compression: true,
+            progress: 0f32,
+            total_bytes: 0,
+            compressed_bytes: 0,
+            now: None,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
 enum Message {
     ConfigLoaded(Result<Config, ConfigError>),
     ConfigSaved(Result<(), ConfigError>),
+    Uploading(UploadProgress),
     UploadDone(Result<(), UploadError>),
     AddressChanged(String),
     ButtonPressed,
+    UseCompressionChanged(bool),
+    DummyChanged(bool),
     EventOccurred(Event),
 }
 
 impl App {
+    fn title(&self) -> String {
+        std::format!("ZXmit v{}  © 2025 Vasily Khoruzhick", CARGO_PKG_VERSION.unwrap())
+    }
+
     fn new() -> (Self, Task<Message>) {
         (
             Self { ..Default::default() },
@@ -188,6 +150,8 @@ impl App {
             Message::ConfigLoaded(Ok(config)) => {
                 *self = Self {
                     address : Some(config.address),
+                    use_compression: config.use_compression,
+                    dummy: config.dummy,
                     ..Default::default()
                 };
                 Task::none()
@@ -212,11 +176,15 @@ impl App {
             }
             Message::UploadDone(Ok(())) => {
                 self.sending = false;
-                self.status = "Upload complete.".to_string();
+                self.status = std::format!("Upload complete\nCompressed {} into {} bytes\nRatio: {}, time: {:.2?}",
+                        self.total_bytes, self.compressed_bytes, self.compressed_bytes as f32 / self.total_bytes as f32,
+                        self.now.unwrap().elapsed());
+                self.now = None;
                 Task::none()
             }
             Message::UploadDone(Err(err)) => {
                 self.sending = false;
+                self.now = None;
                 match err {
                     UploadError::File => {
                         self.status = "Failed to read the file!".to_string();
@@ -227,21 +195,41 @@ impl App {
                 };
                 Task::none()
             }
+            Message::Uploading(progress) => {
+                self.progress = progress.current_block as f32 / progress.blocks_num as f32;
+                self.compressed_bytes = progress.compressed_bytes;
+                self.total_bytes = progress.total_bytes;
+                Task::none()
+            }
             Message::ButtonPressed => {
                 self.sending = true;
+                self.now = Some(time::Instant::now());
+                let task = Task::sip(FileUploader {
+                        address: if let Some(addr) = self.address.clone() { addr } else { "".to_string() },
+                        filepath: if let Some(path) = self.filepath.clone() { path } else { PathBuf::new() },
+                        use_compression: self.use_compression,
+                        dummy: self.dummy,
+                        }.upload(),
+                    Message::Uploading,
+                    Message::UploadDone);
                 Task::batch(vec![
                     Task::perform(Config {
                         address: if let Some(addr) = self.address.clone() { addr } else { "".to_string() },
+                        use_compression: self.use_compression,
+                        dummy: self.dummy,
                     }
                     .save_config(),
                     Message::ConfigSaved),
-                    Task::perform(FileUploader {
-                        address: if let Some(addr) = self.address.clone() { addr } else { "".to_string() },
-                        filepath: if let Some(path) = self.filepath.clone() { path } else { PathBuf::new() },
-                    }
-                    .upload(),
-                    Message::UploadDone),
+                    task,
                 ])
+            }
+            Message::UseCompressionChanged(value) => {
+                self.use_compression = value;
+                Task::none()
+            }
+            Message::DummyChanged(value) => {
+                self.dummy = value;
+                Task::none()
             }
             Message::EventOccurred(event) => {
                 if let Event::Window(WindowEvent::FileDropped(path)) = event {
@@ -298,14 +286,39 @@ impl App {
                     None
                 });
 
-        let status_text = text(&self.status);
+        let use_compression = checkbox("Use compression", self.use_compression)
+            .on_toggle_maybe(if !self.sending {
+                Some (Message::UseCompressionChanged)
+            } else {
+            None
+            });
+
+        let dummy = checkbox("Dummy run", self.dummy)
+            .on_toggle_maybe(if !self.sending {
+                Some (Message::DummyChanged)
+            } else {
+            None
+            });
+
+        let checkboxes = row![
+            use_compression,
+            dummy,
+        ]
+        .spacing(20)
+        .padding(20);
+
+        let status: Element<Message> = if self.sending {
+            progress_bar(0.0..=1.0, self.progress).into()
+        } else {
+            text(&self.status).align_x(Center).into()
+        };
 
         let content = column![
             text_input,
             filename,
             button,
-            status_text,
-            text("© 2025 Vasily Khoruzhick"),
+            checkboxes,
+            status,
         ]
         .align_x(Center)
         .spacing(20)
