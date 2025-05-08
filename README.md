@@ -24,6 +24,10 @@ There are 2 flavors: CLI and GUI, both written in Rust. GUI is self-explanatory,
 
 Run `zxmit -h` for a full list of command line arguments
 
+### Installation
+
+Put zxmit from 'dot' folder into BIN folder on your SD card with EsxDOS
+
 ## Legal
 
 This software is licensed under MIT license
