@@ -4,7 +4,7 @@
 text
     include "modules/version.asm"
     jp start
-ver db "zxmit v. ", VERSION_STRING, 13
+ver db "zxmit v", VERSION_STRING, 13
     db "(c) 2022 Alex Nihirash", 13
     db "(c) 2025 Vasily Khoruzhick", 13, 13, 0
 
