@@ -37,8 +37,10 @@ fn read_file(name: String) -> std::io::Result<Vec<u8>> {
     Ok(buffer)
 }
 
-const HEADER_LEN: usize = 17;
+const LONG_HEADER_LEN: usize = 17;
 const CHUNK_SIZE: usize = 1024;
+const FLAGS_COMPRESSED: u8 = 1;
+const FLAGS_LONG_HEADER: u8 = 2;
 
 fn transmit(
     ip: Ipv4Addr,
@@ -64,6 +66,7 @@ fn transmit(
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let mut seq: u8 = 0;
+        let mut long_header = true;
         for chunk in buffer.chunks(CHUNK_SIZE) {
             let mut block: Vec<u8>;
             let compressed = if no_compression {
@@ -75,32 +78,40 @@ fn transmit(
                 Compressor::new().quick_mode(true).compress(chunk)
             };
 
-            let use_compressed: u8 = if !no_compression
+            let use_compressed: bool = !no_compression
                 && chunk.len() == CHUNK_SIZE
-                && compressed.output.len() < chunk.len()
-            {
-                1
-            } else {
-                0
-            };
+                && compressed.output.len() < chunk.len();
 
-            let mut to_send = if use_compressed == 0 {
+            let mut to_send = if !use_compressed {
                 Vec::from(chunk)
             } else {
                 compressed.output
             };
 
+            let mut flags: u8 = 0;
+
+            if use_compressed {
+                flags |= FLAGS_COMPRESSED;
+            }
+
+            if long_header {
+                flags |= FLAGS_LONG_HEADER;
+            }
+
             block = vec![
                 seq,
                 (to_send.len() % 256) as u8,
                 (to_send.len() / 256) as u8,
-                use_compressed,
+                flags,
             ];
 
             seq = seq.wrapping_add(1);
 
-            block.append(&mut name.clone());
-            block.resize(HEADER_LEN, 0);
+            if long_header {
+                block.append(&mut name.clone());
+                block.resize(LONG_HEADER_LEN, 0);
+                long_header = false;
+            }
             block.append(&mut to_send);
             tx.send(Some(block)).unwrap();
         }

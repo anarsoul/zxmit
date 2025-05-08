@@ -81,7 +81,10 @@ gotWait:
     call Uart.read : cp 'P' : jr nz, gotWait
     ret
 
-HEADER_SIZE equ 17
+LONG_HEADER_SIZE  equ 17
+SHORT_HEADER_SIZE equ 4
+FLAGS_COMPRESSED  equ 1
+FLAGS_LONG_HEADER equ 2
 
 processPacket
     ; does EsxDOS need it preserved?
@@ -92,34 +95,51 @@ processPacket
     ld h, (ix + 2)
     ld l, (ix + 1)
     pop ix
-    ld bc, HEADER_SIZE
+    ld bc, LONG_HEADER_SIZE
+    ld a, (recv_buffer + 3)
+    and FLAGS_LONG_HEADER
+    jr nz, 1f
+    ld bc, SHORT_HEADER_SIZE
+1:
+    ld (header_size), bc
     add hl, bc
     ld bc, (data_size)
     sbc hl, bc
     ld a, h
     or l
     jr z, 1f
-    ld a, '!' : rst #10
 
     ; error, packet size doesn't match the header
+    ld a, '!' : rst #10
     ld a, 1
     ret
 
 1:
     ld a, (file_opened)
     or a
+    jr nz, 2f
+    ld a, (recv_buffer + 3)
+    and FLAGS_LONG_HEADER
     jr nz, 1f
+
+    ; file is not opened, but we recevied a short header.
+    ld a, '@' : rst #10
+    ld a, 2
+    ret
+1:
     ld hl, recv_buffer + 4
     call EsxDOS.open
     ld a, 1
     ld (file_opened), a
 
-1:
+2:
     ld a, (recv_buffer + 3)
-    or a
+    and FLAGS_COMPRESSED
     jr z, .notcompressed
 
-    ld hl, recv_buffer + HEADER_SIZE
+    ld bc, (header_size)
+    ld hl, recv_buffer
+    add hl, bc
     ld de, data_buffer
     call dzx0_standard
 
@@ -129,10 +149,14 @@ processPacket
 
 .notcompressed:
     ld hl, (data_size)
-    ld bc, HEADER_SIZE
+    ld bc, (header_size)
     sbc hl, bc
     ld bc, hl
-    ld hl, recv_buffer + HEADER_SIZE
+    push bc
+    ld bc, (header_size)
+    ld hl, recv_buffer
+    add hl, bc
+    pop bc
 
 .write
     call EsxDOS.write
@@ -345,5 +369,6 @@ seq db 0
 counter db 0
 file_opened db 0
 data_size dw 0
+header_size dw 0
 socket_num db "00000000", 0
     endmodule
