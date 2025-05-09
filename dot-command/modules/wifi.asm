@@ -222,19 +222,9 @@ recv:
 
 .storeDataSize
     ld (data_size), hl
-
+    ex hl, de
     ld hl, recv_buffer
-    ld bc, (data_size)
-.loadPacket
-    push bc
-    push hl
-    call Uart.read 
-    pop hl
-    pop bc
-    ld (hl), a
-    inc hl
-    dec bc
-    ld a, b : or c : jr nz, .loadPacket
+    call Uart.readBlock
 
     call processPacket
     or a

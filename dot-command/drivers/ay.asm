@@ -95,6 +95,17 @@ read:
     ret c
     jr read
 
+; Read block from UART
+; HL - destination
+; DE - size
+readBlock:
+    call read
+    ld (hl), a
+    inc hl
+    dec de
+    ld a, d: or e
+    jr nz, readBlock
+
 uartRead:
     ld hl, _isSecondByteAvail
     ld a, (hl)

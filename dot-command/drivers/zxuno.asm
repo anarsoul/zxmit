@@ -1,7 +1,7 @@
     module Uart
 UART_DATA_REG = #c6
 UART_STAT_REG = #c7
-UART_BYTE_RECIVED = #80
+UART_BYTE_RECEIVED = #80
 UART_BYTE_SENDING = #40
 ZXUNO_ADDR = #FC3B
 ZXUNO_REG = #FD3B
@@ -41,7 +41,7 @@ init:
 write:
     push af
     ld bc, ZXUNO_ADDR : ld a, UART_STAT_REG : out (c), a
-    ld bc, ZXUNO_REG : in A, (c) : and UART_BYTE_RECIVED
+    ld bc, ZXUNO_REG : in A, (c) : and UART_BYTE_RECEIVED
     jr nz, .is_recvF
 .checkSent
     ld bc, ZXUNO_REG : in A, (c) : and UART_BYTE_SENDING
@@ -64,6 +64,37 @@ read:
     jr nc, read
     ret
 
+; Read block from UART
+; HL - destination
+; DE - size
+readBlock:
+    ld a, (poked_byte): and 1: jr z, .noBuff
+    xor a : ld (poked_byte), a: ld a, (byte_buff)
+    ld (hl), a
+    dec de
+.noBuff:
+    ld a, d
+    or e
+    ret z
+
+    ; clear is_recv flag, we will check stat reg again
+    xor a : ld (is_recv), a
+    di
+.loop
+    ld bc, ZXUNO_ADDR : ld a, UART_STAT_REG : out (c), a
+.waitByte
+    ld bc, ZXUNO_REG: in a, (c) : and UART_BYTE_RECEIVED
+    jr z, .waitByte
+
+    ld bc, ZXUNO_ADDR : ld a, UART_DATA_REG : out (c), a
+    ld bc, ZXUNO_REG: in a, (c)
+
+    ld (hl), a
+    inc hl
+    dec de
+    ld a, d : or e : jr nz, .loop
+    ei
+    ret
 
 ; Read byte from UART
 ; A: byte
@@ -76,7 +107,7 @@ uartRead:
     ld a, (is_recv) : and 1 : jr nz, recvRet
 
     ld bc, ZXUNO_ADDR : ld a, UART_STAT_REG : out (c), a
-    ld bc, ZXUNO_REG : in a, (c) : and UART_BYTE_RECIVED
+    ld bc, ZXUNO_REG : in a, (c) : and UART_BYTE_RECEIVED
     jr nz, retReadByte
 
     or a
