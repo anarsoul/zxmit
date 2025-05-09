@@ -1,11 +1,10 @@
 [package]
 name = "zxmit"
-version = "0.3.0"
+version = "0.4.0"
 edition = "2024"
 
 [dependencies]
 dirs-next = "2.0"
-#iced = { version = "0.13", default-features = false, features = ["tokio", "tiny-skia"] }
 iced = { git = "https://github.com/iced-rs/iced.git", rev = "7a97773f1796fa7889435c78305d287449dd05a4", default-features = false, features = ["tokio", "wgpu", "sipper"] }
 regex = "1.11"
 serde = { version = "1.0", features = ["derive"] }
