@@ -140,10 +140,13 @@ processPacket
     ld bc, (header_size)
     ld hl, recv_buffer
     add hl, bc
-    ld de, data_buffer
+    ex hl, de
+    ld hl, data_buffer
+    ld bc, (data_buffered)
+    add hl, bc
+    ex hl, de
     call dzx0_standard
 
-    ld hl, data_buffer
     ld bc, 1024
     jr .write
 
@@ -156,10 +159,32 @@ processPacket
     ld bc, (header_size)
     ld hl, recv_buffer
     add hl, bc
+    ex hl, de
+    ld hl, data_buffer
+    ld bc, (data_buffered)
+    add hl, bc
+    ex hl, de
+    pop bc : push bc
+    ldir
     pop bc
 
 .write
+    ld hl, (data_buffered)
+    add hl, bc
+    ld (data_buffered), hl
+
+    ; accumulate at least 4 packets before writing
+    ld a, (packets_buffered)
+    inc a: and 3
+    ld (packets_buffered), a
+    jr nz, .skipWrite
+
+    ld hl, data_buffer
+    ld bc, (data_buffered)
     call EsxDOS.write
+    ld bc, 0
+    ld (data_buffered), bc
+.skipWrite
     ; OK
     ld a, 0
     ret
@@ -214,15 +239,9 @@ recv:
     call processPacket
     or a
     jr nz, .packetErr
-    ld a, (counter) : inc a : and a, 3 : ld (counter), a
+    ld a, (packets_buffered) : or a
     jr nz, .skipProgress
-    ld a, (recv_buffer + 3)
-    or a
-    ld a, '+'
-    jr nz, 1f
-    ld a, '.'
-1:
-    rst #10
+    ld a, '+' : rst #10
 
 .skipProgress:
     EspSend "AT+CIPSEND="
@@ -266,7 +285,12 @@ recv:
     EspCmd "AT+CIPSERVER=0,1"
     ld a, (file_opened)
     or a
-    call nz, EsxDOS.close
+    ret z
+    ld hl, data_buffer
+    ld bc, (data_buffered)
+    ld a, b: or c
+    call nz, EsxDOS.write
+    call EsxDOS.close
     ret
 
 .errPacket:
@@ -370,5 +394,7 @@ counter db 0
 file_opened db 0
 data_size dw 0
 header_size dw 0
+data_buffered dw 0
+packets_buffered db 0
 socket_num db "00000000", 0
     endmodule
