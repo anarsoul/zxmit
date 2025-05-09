@@ -281,6 +281,7 @@ recv:
     ld a, b: or c
     call nz, EsxDOS.write
     call EsxDOS.close
+    ld a, 13: rst #10
     ret
 
 .errPacket:
