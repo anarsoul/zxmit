@@ -48,6 +48,9 @@ init:
     EspCmdOkErr "AT+CIPMUX=1" ; Multiplexing required for listening
     jp c, .err
 
+    EspCmdOkErr "AT+CIPSERVERMAXCONN=1" ; Maximum 1 connection
+    ; this command doesn't exist on older firmware, so skip checking for error
+
     EspCmdOkErr "AT+CIPSERVER=1,6144" ; Port number 
     jp c, .err
 

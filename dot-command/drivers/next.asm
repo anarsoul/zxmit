@@ -30,7 +30,7 @@ init:
     inc hl
     ld d, (hl)
     ex de, hl
-    
+
     ld bc, UART_Sel, a, %00100000 : out (c), a ; select uart
 
     ld bc, UART_SetBaud
@@ -51,19 +51,22 @@ init:
 write:
     ld d, a
     ld bc, UART_GetStatus
-.wait   
+.wait
     in a, (c) : and UART_TX_BUSY : jr nz, .wait
     out (c), d
     ret
 
-read:
+    MACRO NextUartRead
     ld bc, UART_GetStatus
 .wait
     in a, (c)
     rrca : jr nc, .wait
     ld bc, UART_RxD
     in a, (c)
+    ENDM
 
+read:
+    NextUartRead
 ; Uncomment for debug what happens on UART 
 ;    push af, de, hl
 ;    rst $10
@@ -73,9 +76,9 @@ read:
 ;; HL - buffptr
 ;; DE - size
 readBlock:
-    call read
+    NextUartRead
     ld (hl), a
-    
+
     inc hl
     dec de
     ld a, d
