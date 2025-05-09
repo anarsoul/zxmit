@@ -21,6 +21,10 @@ ver db "zxmit v", VERSION_STRING, 13
     include "drivers/ay.asm"
     ENDIF
 
+    IFDEF NEXT
+    include "drivers/next.asm"
+    ENDIF
+
 start:
     call Display.cls
     printMsg ver

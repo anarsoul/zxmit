@@ -8,5 +8,8 @@ ay:
 zxuno:
 		sjasmplus dot.asm -DUNO -DV=$(VERSION)
 
+next:
+		sjasmplus dot.asm -DNEXT -DV=$(VERSION)
+
 clean:
 		rm -f $(BINARY) *.sld
