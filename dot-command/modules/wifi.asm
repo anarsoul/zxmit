@@ -48,9 +48,6 @@ init:
     EspCmdOkErr "AT+CIPMUX=1" ; Multiplexing required for listening
     jp c, .err
 
-    EspCmdOkErr "AT+CIPSERVERMAXCONN=1" ; Maximum 1 connection
-    jp c, .err
-
     EspCmdOkErr "AT+CIPSERVER=1,6144" ; Port number 
     jp c, .err
 

@@ -3,127 +3,84 @@ UART_BYTE_RECEIVED = #01
 UART_BYTE_SENDING = #02
 UART_TX = #133B
 UART_RX = #143B
+
+UART_RxD  equ #143B       ; Also used to set the baudrate
+UART_TxD  equ #133B       ; Also reads status
+UART_Sel  equ #153B       ; Selects between ESP and Pi, and sets upper 3 bits of baud
+UART_SetBaud equ UART_RxD ; Sets baudrate
+UART_GetStatus equ UART_TxD 
+
+UART_TX_BUSY       equ %00000010
+UART_RX_DATA_READY equ %00000001
+UART_FIFO_FULL     equ %00000100
+
 init:
-    ei 
-    ld b,50
-1
-    push bc
-    call uartRead
-    pop bc
-    halt
-    djnz 1b
+    ld hl, .table
+    ld bc,9275	;Now adjust for the set Video timing.
+    ld a,17
+    out (c),a
+    ld bc,9531
+    in a,(c)	;get timing adjustment
+    ld e,a
+    rlc e		;*2 guaranteed as <127
+    ld d,0
+    add hl,de
 
-    ld bc, #ffff
-.loop
-    push bc
-    call uartRead
-    pop bc
-    dec bc 
-    ld a,b : or c
-    jr z, .loop
+    ld e, (hl)
+    inc hl
+    ld d, (hl)
+    ex de, hl
+    
+    ld bc, UART_Sel, a, %00100000 : out (c), a ; select uart
 
-;    ld hl, set_speed_cmd
-;.speedCmd
-;    ld a, (hl) : and a : ret z
-;    push hl
-;    call write
-;    pop hl
-;    inc hl
-;    jr .speedCmd
+    ld bc, UART_SetBaud
+    ld a, l
+    AND %01111111	; Res BIT 7 to req. write to lower 7 bits
+    out (c), a
+    ld a, h
+    rl l		; Bit 7 in Carry
+    rla		; Now in Bit 0
+    or %10000000	; Set MSB to req. write to upper 7 bits
+    out (c), a
+
+    ret
+.table
+    dw 243,248,256,260,269,278,286,234
+
 
 write:
-    push af
-    ld bc, UART_TX : in A, (c) : and UART_BYTE_RECEIVED
-    jr nz, .is_recvF
-.checkSent
-    ld bc, UART_TX : in A, (c) : and UART_BYTE_SENDING
-    jr nz, .checkSent
-
-    ld bc, UART_TX : pop af : out (c), a
+    ld d, a
+    ld bc, UART_GetStatus
+.wait   
+    in a, (c) : and UART_TX_BUSY : jr nz, .wait
+    out (c), d
     ret
-.is_recvF
-    push af : push hl
-    ld hl, is_recv : ld a, 1 : ld (hl), a 
-    
-    pop hl : pop af
-    jr .checkSent
-
 
 read:
-    call uartRead
-    jr nc, read
+    ld bc, UART_GetStatus
+.wait
+    in a, (c)
+    rrca : jr nc, .wait
+    ld bc, UART_RxD
+    in a, (c)
+
+; Uncomment for debug what happens on UART 
+;    push af, de, hl
+;    rst $10
+;    pop hl, de, af
     ret
 
-; Read block from UART
-; HL - destination
-; DE - size
+;; HL - buffptr
+;; DE - size
 readBlock:
-    ld a, (poked_byte): and 1: jr z, .noBuff
-    xor a : ld (poked_byte), a: ld a, (byte_buff)
+    call read
     ld (hl), a
+    
+    inc hl
     dec de
-.noBuff:
     ld a, d
     or e
     ret z
-
-    ; clear is_recv flag, we will check stat reg again
-    xor a : ld (is_recv), a
-    di
-.loop
-.waitByte
-    ld bc, UART_TX: in a, (c) : and UART_BYTE_RECEIVED
-    jr z, .waitByte
-
-    ld bc, UART_RX: in a, (c)
-
-    ld (hl), a
-    inc hl
-    dec de
-    ld a, d : or e : jr nz, .loop
-    ei
-    ret
-
-; Read byte from UART
-; A: byte
-; B:
-;     1 - Was read
-;     0 - Nothing to read
-uartRead:
-    ld a, (poked_byte) : and 1 : jr nz, .retBuff
-
-    ld a, (is_recv) : and 1 : jr nz, recvRet
-
-    ld bc, UART_TX : in a, (c) : and UART_BYTE_RECEIVED
-    jr nz, retReadByte
-
-    or a
-    ret
-.retBuff
-    ld a, 0 : ld (poked_byte), a : ld a, (byte_buff)
-    scf 
-    ret
-
-retReadByte:
-    xor a : ld (poked_byte), a : ld (is_recv), a
-
-    ld bc, UART_RX : in a, (c)
-
-    scf
-    ret
-
-recvRet:
-    ld bc, UART_RX : in a, (c)
-    ld hl, is_recv : ld (hl), 0
-    ld hl, poked_byte : ld (hl), 0
-    
-    scf
-    ret
-
-; set_speed_cmd db "AT+UART_DEF=115200,8,1,0,2", 13, 10, 0
-
-poked_byte defb 0
-byte_buff defb 0
-is_recv defb 0
+    jr readBlock
 
     endmodule
