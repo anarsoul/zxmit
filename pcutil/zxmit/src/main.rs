@@ -203,6 +203,7 @@ impl App {
             }
             Message::ButtonPressed => {
                 self.sending = true;
+                self.progress = 0f32;
                 self.now = Some(time::Instant::now());
                 let task = Task::sip(FileUploader {
                         address: if let Some(addr) = self.address.clone() { addr } else { "".to_string() },
