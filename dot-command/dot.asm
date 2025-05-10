@@ -26,6 +26,9 @@ ver db "zxmit v", VERSION_STRING, 13
     ENDIF
 
 start:
+    IFDEF NEXT
+    call setCpuSpeed
+    ENDIF
     call Display.cls
     printMsg ver
     call Uart.init
@@ -33,9 +36,41 @@ start:
     printMsg msg_my_ip
     printMsg Wifi.ipAddr
     printMsg new_line
-    jp Wifi.recv
+    call Wifi.recv
+    IFDEF NEXT
+    call restoreCpuSpeed
+    ENDIF
+    ret
 msg_my_ip db "Device IP: ", 0
 new_line db 13, "Listening port: 6144", 13, 0
+
+    IFDEF NEXT
+TBBLUE_REG equ 0x243b
+TBBLUE_DATA equ 0x253b
+CPUSPEED_REG equ 0x07
+
+setCpuSpeed:
+    ld bc, TBBLUE_REG
+    ld a, CPUSPEED_REG
+    out (c), a
+    ld bc, TBBLUE_DATA
+    in a, (c)
+    ld (savedCpuSpeed), a
+    ld a, 2 ; 14 Mhz
+    out (c), a
+    ret
+
+restoreCpuSpeed:
+    ld bc, TBBLUE_REG
+    ld a, CPUSPEED_REG
+    out (c), a
+    ld bc, TBBLUE_DATA
+    ld a, (savedCpuSpeed)
+    out (c), a
+    ret
+
+savedCpuSpeed: db 0
+    ENDIF
 
     savebin "zxmit", text, $ - text
 
