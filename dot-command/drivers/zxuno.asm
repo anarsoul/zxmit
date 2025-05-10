@@ -77,8 +77,11 @@ readBlock:
     or e
     ret z
 
-    ; clear is_recv flag, we will check stat reg again
+    ; check is_recv flag, clear it and skip waiting if necessary
+    ld a, (is_recv): push af
     xor a : ld (is_recv), a
+    pop af: or a
+    jr nz, .skipWait
     di
 .loop
     ld bc, ZXUNO_ADDR : ld a, UART_STAT_REG : out (c), a
@@ -86,6 +89,7 @@ readBlock:
     ld bc, ZXUNO_REG: in a, (c) : and UART_BYTE_RECEIVED
     jr z, .waitByte
 
+.skipWait
     ld bc, ZXUNO_ADDR : ld a, UART_DATA_REG : out (c), a
     ld bc, ZXUNO_REG: in a, (c)
 
