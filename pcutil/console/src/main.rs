@@ -169,9 +169,17 @@ fn split_at_last_dot(filename: &str) -> (String, String) {
 fn filename_to_short(filename: &str) -> String {
     let (mut name, mut extension) = split_at_last_dot(filename);
 
+    name = name.chars().map(|c| { if c.is_ascii() { c.to_uppercase().next().unwrap_or('_') } else { '_' } }).collect();
+
     if name.len() > 8 {
-        name = name.chars().take(8).collect();
+        name = name
+                .chars()
+                .take(8)
+                .collect();
     }
+
+    extension = extension.chars().map(|c| { if c.is_ascii() { c.to_uppercase().next().unwrap_or('_') } else { '_' } }).collect();
+
     if extension.len() > 3 {
         extension = extension.chars().take(3).collect();
     }

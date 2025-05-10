@@ -51,12 +51,16 @@ impl FileUploader {
     fn filename_to_short(filename: &str) -> String {
         let (mut name, mut extension) = Self::split_at_last_dot(filename);
 
+        name = name.chars().map(|c| { if c.is_ascii() { c.to_uppercase().next().unwrap_or('_') } else { '_' } }).collect();
+
         if name.len() > 8 {
             name = name.chars().take(8).collect();
         }
         if extension.len() > 3 {
             extension = extension.chars().take(3).collect();
         }
+
+        extension = extension.chars().map(|c| { if c.is_ascii() { c.to_uppercase().next().unwrap_or('_') } else { '_' } }).collect();
 
         let re = Regex::new(r"[ \t\.\\/]").unwrap();
 
